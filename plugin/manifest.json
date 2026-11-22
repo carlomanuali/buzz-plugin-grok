@@ -1,0 +1,43 @@
+{
+  "id": "carlomanuali.grok",
+  "name": "Grok",
+  "apiVersion": 1,
+  "description": "Run Grok in Buzz through the local Grok CLI, with Buzz and optional Composio tools.",
+  "discovery": {
+    "category": "agents",
+    "tags": [
+      "Grok",
+      "xAI",
+      "ACP"
+    ]
+  },
+  "host": {
+    "mcp": true,
+    "commands": [
+      {
+        "id": "composio-bridge",
+        "program": "python3",
+        "args": [
+          "-c",
+          "#!/usr/bin/env python3\n\"\"\"One-shot, stdin-to-stdout bridge from the Buzz MCP plugin to Composio CLI.\n\nThe CLI owns authentication. This script never accepts a shell command or a\nprogram path from the model; it only builds fixed Composio subcommands.\n\"\"\"\n\nimport json\nimport os\nfrom pathlib import Path\nimport re\nimport shutil\nimport subprocess\nimport sys\n\nCOMPOSIO = (\n    os.environ.get(\"COMPOSIO_BIN\")\n    or shutil.which(\"composio\")\n    or str(Path.home() / \".local\" / \"bin\" / \"composio\")\n)\nMAX_RESULT = 240_000\nSLUG = re.compile(r\"^[A-Z][A-Z0-9_]{1,150}$\")\nTOOLKIT = re.compile(r\"^[a-z][a-z0-9_]{1,80}$\")\n\n\ndef cli(args, data=None):\n    if not Path(COMPOSIO).is_file():\n        raise RuntimeError(\"Composio CLI is unavailable. Install and sign in to composio, then restart Buzz.\")\n    completed = subprocess.run(\n        [COMPOSIO, *args],\n        input=data,\n        text=True,\n        capture_output=True,\n        timeout=90,\n        check=False,\n    )\n    output = completed.stdout.strip()\n    if len(output) > MAX_RESULT:\n        output = output[:MAX_RESULT] + \"\\n[Composio result truncated]\"\n    if completed.returncode:\n        error = completed.stderr.strip() or output or f\"Exit {completed.returncode}\"\n        raise RuntimeError(error[:4000])\n    try:\n        return json.loads(output)\n    except json.JSONDecodeError:\n        return output\n\n\ndef required_string(request, key, maximum=500):\n    value = request.get(key)\n    if not isinstance(value, str) or not value.strip() or len(value) > maximum:\n        raise ValueError(f\"{key} must be a nonempty string up to {maximum} characters\")\n    return value.strip()\n\n\ndef not_option(key, value):\n    # A value the CLI could read as an option is refused, not passed on.\n    if value.startswith(\"-\"):\n        raise ValueError(f\"{key} must not start with a dash\")\n    return value\n\n\ndef slug(request):\n    value = required_string(request, \"slug\", 151)\n    if not SLUG.fullmatch(value):\n        raise ValueError(\"slug must contain uppercase letters, digits, and underscores\")\n    return value\n\n\ndef run(request):\n    operation = request.get(\"operation\")\n    if operation == \"connections\":\n        raw = cli([\"connections\", \"list\"])\n        if not isinstance(raw, dict):\n            raise RuntimeError(\"Unexpected Composio connections response\")\n        return {\n            toolkit: [\n                {\n                    key: account.get(key)\n                    for key in (\"alias\", \"word_id\", \"status\", \"permission_group\")\n                    if account.get(key) is not None\n                }\n                for account in accounts\n                if isinstance(account, dict)\n            ]\n            for toolkit, accounts in raw.items()\n            if isinstance(accounts, list)\n        }\n    if operation == \"search\":\n        query = not_option(\"query\", required_string(request, \"query\"))\n        limit = request.get(\"limit\", 8)\n        if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 20:\n            raise ValueError(\"limit must be an integer from 1 to 20\")\n        args = [\"search\", query, \"--limit\", str(limit)]\n        toolkit = request.get(\"toolkit\")\n        if toolkit is not None:\n            if not isinstance(toolkit, str) or not TOOLKIT.fullmatch(toolkit):\n                raise ValueError(\"toolkit must be one lowercase toolkit slug\")\n            args += [\"--toolkits\", toolkit]\n        return cli(args)\n    if operation == \"schema\":\n        return cli([\"execute\", slug(request), \"--get-schema\"])\n    if operation == \"execute\":\n        arguments = request.get(\"arguments\", {})\n        if not isinstance(arguments, dict):\n            raise ValueError(\"arguments must be a JSON object\")\n        encoded = json.dumps(arguments, ensure_ascii=False)\n        if len(encoded.encode(\"utf-8\")) > 60_000:\n            raise ValueError(\"arguments exceed the 60 KB command limit\")\n        args = [\"execute\", slug(request), \"-d\", \"-\"]\n        if request.get(\"account\") is not None:\n            args += [\"--account\", not_option(\"account\", required_string(request, \"account\", 150))]\n        return cli(args, encoded)\n    raise ValueError(\"Unknown Composio bridge operation\")\n\n\ndef main():\n    try:\n        request = json.load(sys.stdin)\n        if not isinstance(request, dict):\n            raise ValueError(\"Expected a JSON object\")\n        result = {\"ok\": True, \"data\": run(request)}\n    except Exception as error:\n        result = {\"ok\": False, \"error\": str(error)[:4000]}\n    print(json.dumps(result, ensure_ascii=False, separators=(\",\", \":\")))\n\n\nif __name__ == \"__main__\":\n    main()\n"
+        ],
+        "maxInputBytes": 65536,
+        "maxOutputBytes": 1048576
+      }
+    ],
+    "processes": [
+      {
+        "id": "grok",
+        "program": "grok",
+        "args": [
+          "--sandbox",
+          "strict",
+          "--no-memory",
+          "agent",
+          "--no-leader",
+          "stdio"
+        ]
+      }
+    ]
+  }
+}
