@@ -10,14 +10,16 @@ assert.equal(manifest.host.processes[0].program, 'grok');
 assert.deepEqual(manifest.host.processes[0].args, ['--sandbox', 'strict', '--no-memory', 'agent', '--no-leader', 'stdio']);
 assert.ok(!JSON.stringify(manifest).includes('always-approve'));
 assert.equal(manifest.host.files, undefined);
-assert.deepEqual(DEFAULT_CONFIG, {instructions: '', scope: 'thread', workspace: '', model: '', effort: '', allowWrites: false, webSearch: true});
+assert.deepEqual(DEFAULT_CONFIG, {instructions: '', scope: 'thread', workspace: '', model: '', effort: '', allowWrites: false, webSearch: false});
 assert.equal(config({workspace:'/tmp', model:' grok-4.7 '}).model, 'grok-4.7');
 assert.equal(config({effort:'high'}).effort, 'high');
 assert.equal(config({effort:'turbo'}).effort, '');
-assert.equal(config({}).webSearch, true);
-assert.equal(config({webSearch:false}).webSearch, false);
-assert.deepEqual(sessionTools(config({})), ['search_tool', 'use_tool', 'web_search']);
-assert.deepEqual(sessionTools(config({webSearch:false})), ['search_tool', 'use_tool']);
+// Web search is off unless the owner turns it on.
+assert.equal(config({}).webSearch, false);
+assert.equal(config({webSearch:'yes'}).webSearch, false);
+assert.equal(config({webSearch:true}).webSearch, true);
+assert.deepEqual(sessionTools(config({})), ['search_tool', 'use_tool']);
+assert.deepEqual(sessionTools(config({webSearch:true})), ['search_tool', 'use_tool', 'web_search']);
 const models = {currentModelId:'grok-a',availableModels:[{modelId:'grok-a'},{modelId:'grok-b'}]};
 assert.equal(chooseGrokModel(models), undefined);
 assert.equal(chooseGrokModel(models, 'grok-a'), undefined);
@@ -42,6 +44,14 @@ approval.permission(ask({rawInput:{variant:'UseTool',tool_name:'x y <b>'}}));
 assert.equal(approval.refused, 'a tool');
 assert.deepEqual(approval.permission({toolCall:useTool('buzz__read'),options:[{kind:'allow_once',optionId:'allow'}]}), {outcome:'selected',optionId:'allow'});
 assert.deepEqual(approval.permission({toolCall:useTool('other__x'),options:[{kind:'allow_once',optionId:'allow'}]}), {outcome:'cancelled'});
+// With the server's advertised list, only listed tools are approved.
+const listed = new TurnText(() => true, new Set(['read']));
+assert.deepEqual(listed.permission(ask(useTool('buzz__read'))), {outcome:'selected',optionId:'allow'});
+assert.deepEqual(listed.permission(ask(useTool('buzz__wipe_everything'))), {outcome:'selected',optionId:'reject'});
+// The handler records what tools/list returned, Composio tools included.
+const seen = new Set();
+await mcpHandler(async (m) => ({jsonrpc:'2.0',id:m.id,result:{tools:[{name:'read'}]}}), {}, () => undefined, false, () => true, seen)({jsonrpc:'2.0',id:5,method:'tools/list'});
+assert.deepEqual([...seen], ['read', 'composio_connections', 'composio_search', 'composio_schema', 'composio_execute']);
 // After Stop nothing is approved.
 const stopped = new TurnText(() => false);
 assert.deepEqual(stopped.permission(ask(useTool('buzz__read'))), {outcome:'selected',optionId:'reject'});
@@ -82,6 +92,17 @@ assert.equal(Array.isArray((await mcpHandler(async (m) => ({jsonrpc:'2.0',id:m.i
 const bridge = manifest.host.commands[0];
 assert.equal(bridge.program, 'python3');
 assert.equal(bridge.args[0], '-c');
+// Buzz's manifest rules (plugin-manager valid_program): at most 16 arguments,
+// each at most 1024 bytes and free of NUL, for every command and process.
+for (const declared of [...manifest.host.commands, ...manifest.host.processes]) {
+  assert.ok(declared.args.length <= 16, `${declared.id}: too many arguments`);
+  for (const argument of declared.args) {
+    assert.ok(Buffer.byteLength(argument) <= 1024, `${declared.id}: an argument is over 1024 bytes`);
+    assert.ok(!argument.includes('\0'));
+  }
+}
+// The chunks after the loader are the bridge source, unchanged.
+assert.equal(bridge.args.slice(2).join(''), readFileSync(new URL('../src/composio_bridge.py', import.meta.url), 'utf8'));
 assert.ok(!/\/Users\/[^/]+\/REPOS/.test(JSON.stringify(manifest)));
 assert.ok(!/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i.test(JSON.stringify(manifest)));
 const result = spawnSync('python3', bridge.args, {input:'{"operation":"invalid"}',encoding:'utf8'});

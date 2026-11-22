@@ -29,7 +29,7 @@ export const EFFORTS = Object.freeze(["low", "medium", "high", "xhigh"]);
 
 export const DEFAULT_CONFIG = Object.freeze({
   instructions: "", scope: "thread", workspace: "", model: "", effort: "",
-  allowWrites: false, webSearch: true,
+  allowWrites: false, webSearch: false,
 });
 
 function absolutePath(path) {
@@ -57,7 +57,7 @@ export function config(raw) {
     model: typeof value.model === "string" ? value.model.trim() : "",
     effort: EFFORTS.includes(value.effort) ? value.effort : "",
     allowWrites: value.allowWrites === true,
-    webSearch: value.webSearch !== false,
+    webSearch: value.webSearch === true,
   };
 }
 
@@ -276,8 +276,11 @@ function toolLabel(params) {
 export class TurnText {
   /** `allowed()` is asked, synchronously, at each approval request: false
    * once the owner pressed Stop or the delivery is no longer current. */
-  constructor(allowed = () => true) {
+  constructor(allowed = () => true, advertised = undefined) {
     this.allowed = allowed;
+    /** The tool names this plugin's MCP server listed for the session; when
+     * given, only those are approved. */
+    this.advertised = advertised;
     this.segments = [""];
     /** The last tool this turn refused, for the post that explains it. */
     this.refused = undefined;
@@ -307,7 +310,8 @@ export class TurnText {
       : { outcome: "cancelled" };
     if (!this.allowed()) return refuse();
     const once = options.find((option) => option?.kind === "allow_once");
-    if (buzzToolOf(params) && once)
+    const tool = buzzToolOf(params);
+    if (tool && once && (!this.advertised || this.advertised.has(tool)))
       return { outcome: "selected", optionId: once.optionId };
     this.refused = toolLabel(params);
     return refuse();
@@ -413,7 +417,7 @@ const READ_ONLY_BUZZ_TOOLS = new Set([
  * change to the setting reaches sessions that are already open. `active()`
  * is asked at each tool call too: false outside a current, running turn
  * (after Stop, after the answer, or before the next mention). */
-export function mcpHandler(buzz, host, session, allowWrites = false, active = () => true) {
+export function mcpHandler(buzz, host, session, allowWrites = false, active = () => true, advertised = undefined) {
   const writable = typeof allowWrites === "function" ? allowWrites : () => allowWrites === true;
   return async (message) => {
     const method = message?.method;
@@ -421,8 +425,12 @@ export function mcpHandler(buzz, host, session, allowWrites = false, active = ()
     if (method === "tools/list") {
       const response = await buzz(message);
       const tools = response?.result?.tools;
-      if (Array.isArray(tools))
-        return { ...response, result: { ...response.result, tools: [...tools, ...COMPOSIO_TOOLS] } };
+      if (Array.isArray(tools)) {
+        const listed = [...tools, ...COMPOSIO_TOOLS];
+        // What the permission gate accepts as this server's tools.
+        for (const tool of listed) if (typeof tool?.name === "string") advertised?.add(tool.name);
+        return { ...response, result: { ...response.result, tools: listed } };
+      }
       return response;
     }
     if (method !== "tools/call") return buzz(message);
@@ -474,7 +482,7 @@ export function mcpHandler(buzz, host, session, allowWrites = false, active = ()
   };
 }
 
-/** Thrown when the owner's Stop ends a turn before it reached Grok. */
+/** Thrown when the owner's Stop ends a turn: nothing is posted after it. */
 const STOPPED = Symbol("stopped");
 
 /** A turn's Stop: settles `signal` and cancels whatever the turn is doing. */
@@ -595,7 +603,8 @@ export class GrokRuntime {
       .catch(() => {})
       .then(() => this.turn(delivery, entry, conversation, saved, control))
       .catch((error) =>
-        error === STOPPED
+        // After Stop nothing is posted, not even a failure that follows it.
+        error === STOPPED || control.stopped
           ? { ok: true, stopped: true }
           : { ok: false, error: failureReport(error) },
       )
@@ -681,6 +690,7 @@ export class GrokRuntime {
       if (typeof this.host?.serveMcp !== "function")
         throw new PublicError("Buzz cannot start Grok's tool server.");
       const buzzTools = this.harness.tools(agent, conversation);
+      const advertised = new Set();
       let server;
       let created;
       try {
@@ -689,6 +699,7 @@ export class GrokRuntime {
             buzzTools, this.host, () => session,
             () => session?.allowWrites === true,
             () => session?.live?.() === true,
+            advertised,
           )),
           control, process, this.startMs, "start tools",
         );
@@ -731,7 +742,7 @@ export class GrokRuntime {
         session = {
           id: created.sessionId, cursor: undefined, process, server, answered: false,
           model: saved.model, effort: saved.effort, webSearch: saved.webSearch,
-          allowWrites: false,
+          allowWrites: false, advertised,
         };
         void server.closed.then(() => {
           if (entry.sessions.get(conversation.key) === session)
@@ -775,7 +786,7 @@ export class GrokRuntime {
       ? `${remotePrompt(agent, conversation, saved)}\n\n${prompt.text}`
       : prompt.text;
 
-    const answer = new TurnText(() => !stale());
+    const answer = new TurnText(() => !stale(), session.advertised);
     session.answered = false;
     // Read at each tool call: turning the setting off applies from this turn,
     // and no tool call is served once this turn is stopped or over.
@@ -794,6 +805,10 @@ export class GrokRuntime {
           sessionId: session.id,
           prompt: [{ type: "text", text }],
         }),
+        // Stop settles the wait at once, whatever Grok does with the cancel.
+        control.signal.then(() => {
+          throw STOPPED;
+        }),
         new Promise((_, reject) => {
           timer = setTimeout(() => {
             void control.cancel?.();
@@ -805,6 +820,7 @@ export class GrokRuntime {
           }, this.turnMs);
         }),
       ]);
+      if (stale()) throw STOPPED;
       // Shown once Grok has it, whatever the answer.
       session.cursor = prompt.cursor;
     } catch (error) {
@@ -821,7 +837,6 @@ export class GrokRuntime {
     }
 
     if (result?.stopReason === "cancelled") {
-      if (control.stopped) return { ok: true, stopped: true };
       // Grok ends the turn when a permission is refused.
       if (answer.refused)
         throw new PublicError(`Grok tried to use ${answer.refused}, which this plugin does not allow, so the turn stopped.`);
@@ -831,6 +846,8 @@ export class GrokRuntime {
       throw new PublicError(
         `Grok stopped without an answer (${stopReason(result?.stopReason)}).`,
       );
+    // The last check before posting: a Stop since the answer posts nothing.
+    if (stale()) throw STOPPED;
     if (!session.answered)
       await this.harness.reply(agent, conversation, body || "_Grok finished without a reply._");
     return { ok: true };

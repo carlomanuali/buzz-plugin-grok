@@ -1,8 +1,8 @@
 # Grok for Buzz
 
 **Put Grok in your [Buzz](https://buzz.xyz) threads.** Mention the agent and
-it answers in the conversation. It can read the thread, search Buzz, search
-the web and, if you use the
+it answers in the conversation. It can read the thread, search Buzz,
+search the web if you allow it and, if you use the
 [Composio CLI](https://docs.composio.dev/cli/quickstart), reach the apps you
 have connected there: Gmail, Calendar, GitHub, Asana, Slack and many more.
 
@@ -23,8 +23,9 @@ host.
   right Composio tool, checks its schema, then runs it with the accounts
   signed in on your computer (once you allow tool changes).
 - **A chat agent, not a coding agent.** Each session gets only the Buzz
-  tools and, if you want, web search. Grok's shell, file and edit tools are
-  not in the session, and the process runs in Grok's `strict` sandbox.
+  tools, plus web search if you turn it on. Grok's shell, file and edit
+  tools are not in the session, and the process runs in Grok's `strict`
+  sandbox.
 - **Read-only by default.** Changes in Buzz and Composio actions stay off
   until you allow them for that agent.
 - **Small and self-contained.** One JavaScript file and a manifest. No npm
@@ -50,7 +51,7 @@ host.
 | Setting | Effect |
 | --- | --- |
 | Allow tool changes in Buzz and Composio | Off by default: Grok can use Buzz tools that only read, and search Composio tools and their schemas. On: it can also post, edit and react in Buzz, and run Composio actions. |
-| Allow web search | On by default: Grok's web search, which can also open web pages. Off: no web access from the session. |
+| Allow web search | Off by default. On: Grok's web search, which can also open web pages. See [Privacy and trust](#privacy-and-trust) before turning it on. |
 | Workspace | Absolute path of an existing folder. Grok starts there, and the sandbox confines reads to it. Required. |
 | Grok model ID | Blank keeps your Grok default. Otherwise an ID from `grok models`. |
 | Reasoning effort | Model default, or low, medium, high, xhigh. |
@@ -133,9 +134,19 @@ When settings apply:
 - With **Allow tool changes** on, Grok can act on your Buzz account and on
   every app connected in your Composio CLI whenever you mention it. That
   includes being steered by text it reads, such as earlier messages in the
-  thread, a web page or content from a connected app. With web search on,
-  that text could also lead it to open a web address. Turn changes on only
+  thread, a web page or content from a connected app. Turn changes on only
   for an agent you trust, with instructions you wrote.
+- **Outbound text, in any mode.** Grok writes the queries it sends out, and
+  it can be steered by text it reads, so a query can carry text from the
+  conversation:
+  - **Web search** (off by default) sends Grok's queries to the web search
+    service and can open any web address, so private text could leave in a
+    query or a URL. Turn it on only for agents whose conversations you would
+    be comfortable seeing in a search query.
+  - **Composio search** works in read-only mode too: `composio_search` sends
+    Grok's query, through your Composio CLI, to Composio's tool catalog
+    search. It searches tool descriptions, not your apps, and runs no
+    action, but the query text leaves your computer.
 - The `strict` sandbox lets Grok's process read the workspace, system
   folders, temporary folders and Grok's own `~/.grok`. The session has no
   file tools, so the model does not read files directly. On macOS the

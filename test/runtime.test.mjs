@@ -37,7 +37,10 @@ function fakeHost() {
           const reply = (result) => out({ jsonrpc: '2.0', id: message.id, result });
           switch (message.method) {
             case 'initialize': return reply({ protocolVersion: 1 });
-            case 'session/new': return reply({
+            case 'session/new':
+              // Like Grok, list the session's MCP tools while opening it.
+              await host.servers.at(-1)?.handler({ jsonrpc: '2.0', id: 'list', method: 'tools/list' });
+              return reply({
               sessionId: `s${++nextSession}`,
               models: {
                 currentModelId: 'grok-a',
@@ -45,6 +48,8 @@ function fakeHost() {
               },
             });
             case 'session/prompt': {
+              // A Grok that ignores session/cancel and never answers.
+              if (host.hang) { host.hung = true; return; }
               const sessionId = message.params.sessionId;
               const update = (u) => out({ jsonrpc: '2.0', method: 'session/update', params: { sessionId, update: u } });
               if (host.permissionFor) {
@@ -89,7 +94,9 @@ const replies = [];
 const harness = {
   async conversation() { return { key: 'thread-1', where: 'a thread' }; },
   tools() {
-    return async (message) => ({ jsonrpc: '2.0', id: message.id, result: { content: [{ type: 'text', text: 'ok' }] } });
+    return async (message) => message.method === 'tools/list'
+      ? { jsonrpc: '2.0', id: message.id, result: { tools: [{ name: 'read' }, { name: 'channel_delete' }] } }
+      : { jsonrpc: '2.0', id: message.id, result: { content: [{ type: 'text', text: 'ok' }] } };
   },
   async turnPrompt() { return { text: 'question', cursor: 1, restore() {} }; },
   async reply(_agent, _conversation, text) { replies.push(text); },
@@ -131,7 +138,7 @@ assert.equal(count('session/new'), 1);
 const opened = last('session/new').params;
 assert.equal(opened.cwd, '/tmp');
 assert.equal(opened._meta.yoloMode, false);
-assert.deepEqual(opened._meta.agentProfile.tools, ['search_tool', 'use_tool', 'web_search']);
+assert.deepEqual(opened._meta.agentProfile.tools, ['search_tool', 'use_tool'], 'no web search by default');
 assert.deepEqual(opened.mcpServers.map((server) => server.name), ['buzz']);
 assert.equal(configCalls().length, 0, 'the default model and effort are left alone');
 assert.equal(host.inTurn, true);
@@ -161,11 +168,11 @@ assert.equal(count('session/close'), 1);
 assert.deepEqual(configCalls().map((call) => [call.params.configId, call.params.value]),
   [['model', 'grok-b'], ['reasoning_effort', 'low']]);
 
-// Web search off: another new session, without the web_search tool.
-saved = { ...saved, webSearch: false };
+// Web search on: another new session, with the web_search tool.
+saved = { ...saved, webSearch: true };
 await mention();
 assert.equal(count('session/new'), 3);
-assert.deepEqual(last('session/new').params._meta.agentProfile.tools, ['search_tool', 'use_tool']);
+assert.deepEqual(last('session/new').params._meta.agentProfile.tools, ['search_tool', 'use_tool', 'web_search']);
 
 // A new workspace: a new process started there, and a new session.
 saved = { ...saved, workspace: '/var' };
@@ -193,6 +200,12 @@ host.permissionFor = { title: 'buzz__read', rawInput: { variant: 'UseTool', tool
 assert.deepEqual(await mention(), { ok: true });
 assert.deepEqual(host.outcome, { outcome: 'selected', optionId: 'allow-once' });
 
+// A buzz__ name the server never listed is rejected too.
+host.permissionFor = { title: 'buzz__wipe', rawInput: { variant: 'UseTool', tool_name: 'buzz__wipe', tool_input: {} } };
+assert.equal((await mention()).ok, false);
+assert.deepEqual(host.outcome, { outcome: 'selected', optionId: 'reject-once' });
+assert.match(replies.at(-1), /Grok tried to use buzz__wipe/);
+
 // Any other tool is rejected; Grok ends the turn, and the post says why.
 host.permissionFor = { title: 'Write `/tmp/x`', kind: 'edit', rawInput: { variant: 'Write', file_path: '/tmp/x' }, _meta: { 'x.ai/tool': { name: 'write' } } };
 const refused = await mention();
@@ -208,8 +221,28 @@ host.duringPrompt = async () => {
   await stop();
   return (await toolCall(host.servers.at(-1))).result.content[0].text;
 };
-await mention();
+const repliesBeforeStop = replies.length;
+assert.deepEqual(await mention(), { ok: true, stopped: true });
 assert.match(host.inTurn, /No Grok turn is running/);
+// Grok still answered end_turn after the cancel: nothing is posted.
+assert.equal(replies.length, repliesBeforeStop);
+
+// Stop while Grok ignores the cancel and never answers: the turn ends at
+// once as stopped, with no reply and no failure post.
+host.duringPrompt = undefined;
+host.hang = true;
+let hungDone;
+await runtime.run({
+  trigger: { type: 'mention' },
+  agent: { key: 'agent-1', name: 'Test Grok' },
+  config: { workspace: '/var' },
+  workingUntil: (promise) => { hungDone = promise; },
+  interruptible: (fn) => { stop = fn; },
+});
+while (!host.hung) await new Promise((resolve) => setTimeout(resolve, 1));
+await stop();
+assert.deepEqual(await Promise.race([hungDone, new Promise((resolve) => setTimeout(() => resolve('still waiting'), 1000))]), { ok: true, stopped: true });
+assert.equal(replies.length, repliesBeforeStop);
 
 runtime.dispose();
 console.log('Runtime checks passed');
