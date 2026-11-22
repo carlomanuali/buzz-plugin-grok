@@ -52,7 +52,7 @@ host.
 | --- | --- |
 | Allow tool changes in Buzz and Composio | Off by default: Grok can use Buzz tools that only read, and search Composio tools and their schemas. On: it can also post, edit and react in Buzz, and run Composio actions. |
 | Allow web search | Off by default. On: Grok's web search, which can also open web pages. See [Privacy and trust](#privacy-and-trust) before turning it on. |
-| Workspace | Absolute path of an existing folder. Grok starts there, and the sandbox confines reads to it. Required. |
+| Workspace | Absolute path of an existing folder. Grok's process starts there; the `strict` sandbox lets it read this folder, system folders, temporary folders and `~/.grok`, and nothing else in your home folder. Required. |
 | Grok model ID | Blank keeps your Grok default. Otherwise an ID from `grok models`. |
 | Reasoning effort | Model default, or low, medium, high, xhigh. |
 | Instructions | Added at the start of each new Grok session. |
@@ -80,8 +80,12 @@ When settings apply:
   session per conversation. After 30 idle minutes the process stops. The
   next mention starts a new one, and Buzz shows it the conversation again.
 - Every session is opened in ask mode, even if your Grok config sets
-  always-approve, with an agent profile whose only tools are `search_tool`,
-  `use_tool` and, if allowed, `web_search`.
+  always-approve, with an agent profile whose tool allowlist is
+  `search_tool`, `use_tool` and, if allowed, `web_search`. Grok applies the
+  allowlist itself, so its file, listing, search, shell, edit and subagent
+  tools are never offered to the model. This depends on the Grok CLI
+  honouring the allowlist; `npm run check:grok` verifies it for the
+  version you have installed (checked with 1.0.92).
 - For every session, Buzz serves a local MCP server named `buzz`. It carries
   Buzz's conversation tools plus four Composio tools: `composio_connections`,
   `composio_search`, `composio_schema` and `composio_execute`. Grok sees them
@@ -102,11 +106,15 @@ When settings apply:
 - **Who can start a turn:** only your own mentions. Buzz's harness checks
   this. Watches, timers and other plugins' wakes are ignored, because the
   agent works with your accounts.
-- **Approvals:** the plugin approves Grok's calls to the `buzz` MCP server
-  one at a time and rejects everything else, such as a tool from an MCP
-  server in your own Grok config. Grok ends the turn when a tool is
-  rejected, and the plugin posts which tool it was. Nothing is approved
-  after you press Stop.
+- **Approvals:** only tools that ask for permission reach the plugin. With
+  this profile that is `use_tool`, Grok's way of calling MCP tools. The
+  plugin approves calls to tools its own `buzz` server listed, one at a
+  time, and rejects everything else, such as a tool from an MCP server in
+  your own Grok config. Grok ends the turn when a tool is rejected, and the
+  plugin posts which tool it was. Nothing is approved after you press Stop.
+- Grok runs its read-only tools without asking. With this profile that is
+  only web search, when you turn it on, so the plugin never sees those
+  calls; the setting is the control.
 - **Read-only mode** (the default) allows a fixed list of Buzz tools that
   only read, plus `composio_connections`, `composio_search` and
   `composio_schema`. No Composio action runs (`composio_execute`), not even
@@ -148,9 +156,12 @@ When settings apply:
     search. It searches tool descriptions, not your apps, and runs no
     action, but the query text leaves your computer.
 - The `strict` sandbox lets Grok's process read the workspace, system
-  folders, temporary folders and Grok's own `~/.grok`. The session has no
-  file tools, so the model does not read files directly. On macOS the
-  sandbox does not limit network access.
+  folders, temporary folders and Grok's own `~/.grok`, which holds Grok's
+  sign-in. The model reaches files only through tools, and the allowlist
+  leaves it none. If a Grok version ignored the allowlist, its read-only
+  file tools would run without asking, inside that read set, so run
+  `npm run check:grok` after updating Grok. On macOS the sandbox does not
+  limit network access.
 - The plugin stores no credentials. Grok and Composio keep their own
   sign-ins on your computer. The plugin never turns on always-approve.
 - The Composio bridge refuses search queries and account names that start
@@ -172,6 +183,7 @@ Other platforms and versions should work but have not been checked.
 ```sh
 npm run build   # embed src/composio_bridge.py into plugin/manifest.json
 npm run check   # syntax checks, unit tests, runtime tests against a stand-in grok
+npm run check:grok  # live: the installed grok honours the plugin's tool allowlist (two short turns)
 ```
 
 `plugin/` is the installable folder: `manifest.json` and one self-contained

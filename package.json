@@ -11,6 +11,7 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
-    "check": "node --check plugin/plugin.js && python3 -m py_compile src/composio_bridge.py && node test/plugin.test.mjs && node test/runtime.test.mjs"
+    "check": "node --check plugin/plugin.js && python3 -m py_compile src/composio_bridge.py && node test/plugin.test.mjs && node test/runtime.test.mjs",
+    "check:grok": "node scripts/check-grok.mjs"
   }
 }
