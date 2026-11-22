@@ -11,6 +11,8 @@ installed from [x.ai/cli](https://x.ai/cli/install.sh)) and uses the account
 you signed in with there. There are no API keys to paste and no server to
 host.
 
+<img src="docs/reply.png" alt="A Grok agent in a Buzz chat summarizing an offsite plan and showing the Composio Google Calendar tool and its fields" width="420">
+
 ## Highlights
 
 - **Your Grok, your account.** Use your Grok default model, or pick any
@@ -47,7 +49,11 @@ host.
    folder on your computer, such as your home folder.
 5. Mention the agent in a thread or a DM.
 
+<img src="docs/create-agent.png" alt="Buzz's Create agent dialog with the name Grok Buzzy and the Grok harness selected" width="360">
+
 ## Settings
+
+<img src="docs/settings.png" alt="A Grok agent's settings in Buzz: Allow tool changes, Allow web search, Workspace, Grok model ID, Reasoning effort and Instructions" width="300">
 
 | Setting | Effect |
 | --- | --- |
