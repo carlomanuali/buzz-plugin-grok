@@ -110,12 +110,19 @@ async function turn(webSearch) {
     if (local.length) problems.push(`local tool calls: ${local.join(', ')}`);
     if (text.includes(marker)) problems.push('the reply contains the workspace file');
     console.log(`${problems.length ? 'FAIL' : 'ok  '} webSearch=${webSearch} definitions=[${(definitions ?? []).join(', ')}] calls=[${calls.join(', ')}]`);
-    // This check's own session record; nothing else in Grok's home.
-    rmSync(sessionDir, { recursive: true, force: true });
     for (const problem of problems) console.log(`     ${problem}`);
     return problems.length === 0;
   } finally {
+    // Stop grok before removing what it writes, then remove only this
+    // check's own session record from Grok's home, best effort.
+    const exited = new Promise((resolve) => child.once('exit', resolve));
     child.kill();
+    await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 5000))]);
+    try {
+      rmSync(join(GROK_HOME, 'sessions', encodeURIComponent(workspace)), { recursive: true, force: true });
+    } catch (error) {
+      console.log(`     (could not remove this check's Grok session record: ${error.code ?? error.message})`);
+    }
     rmSync(workspace, { recursive: true, force: true });
   }
 }
@@ -123,8 +130,10 @@ async function turn(webSearch) {
 const version = await new Promise((resolve) => {
   const child = spawn(declared.program, ['--version'], { stdio: ['ignore', 'pipe', 'ignore'] });
   let out = '';
+  const timer = setTimeout(() => { child.kill(); resolve('grok --version did not answer within 15 s'); }, 15_000);
   child.stdout.on('data', (data) => { out += data; });
-  child.on('exit', () => resolve(out.trim()));
+  child.on('error', (error) => { clearTimeout(timer); resolve(`grok could not start: ${error.message}`); });
+  child.on('exit', () => { clearTimeout(timer); resolve(out.trim()); });
 });
 console.log(version);
 const results = [];

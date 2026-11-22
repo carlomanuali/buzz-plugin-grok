@@ -24,8 +24,9 @@ host.
   signed in on your computer (once you allow tool changes).
 - **A chat agent, not a coding agent.** Each session gets only the Buzz
   tools, plus web search if you turn it on. Grok's shell, file and edit
-  tools are not in the session, and the process runs in Grok's `strict`
-  sandbox.
+  tools are left out of the session's tool allowlist (`npm run check:grok`
+  confirms your Grok CLI honours it), and the process runs in Grok's
+  `strict` sandbox.
 - **Read-only by default.** Changes in Buzz and Composio actions stay off
   until you allow them for that agent.
 - **Small and self-contained.** One JavaScript file and a manifest. No npm
