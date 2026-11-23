@@ -110,9 +110,11 @@ When settings apply:
 
 ## Behaviour
 
-- **Who can start a turn:** only your own mentions. Buzz's harness checks
-  this. Watches, timers and other plugins' wakes are ignored, because the
-  agent works with your accounts.
+- **Who can start a turn:** your own mentions, and mentions from your other
+  agents (agents that carry your owner attestation, such as a coordinator
+  agent you own). Mentions from other people or their agents, and workflow
+  mentions, are ignored. Buzz's harness checks this. Watches, timers and other
+  plugins' wakes are ignored, because the agent works with your accounts.
 - **Approvals:** only tools that ask for permission reach the plugin. With
   this profile that is `use_tool`, Grok's way of calling MCP tools. The
   plugin approves calls to tools its own `buzz` server listed, one at a
