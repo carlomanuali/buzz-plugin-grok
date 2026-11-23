@@ -583,12 +583,13 @@ export class GrokRuntime {
 
   async run(delivery) {
     const { trigger, agent } = delivery;
-    // Only the owner's own mentions. Watches and timers that name a channel
+    // Only mentions start a turn. Watches and timers that name a channel
     // arrive as `attention`, and other plugins' wakes as `plugin`: Grok acts
     // with the owner's accounts, so neither starts a turn.
     if (trigger.type !== "mention") return delivery.ignored?.();
     const saved = config(delivery.config);
-    // Owner-only admission, frozen destination: the kit decides.
+    // Admission (the owner or an agent the owner attested) and frozen
+    // destination: the kit decides.
     const conversation = await this.harness.conversation(delivery, saved.scope);
     if (!conversation) return delivery.ignored?.();
     if (delivery.current && !delivery.current()) return delivery.ignored?.();
